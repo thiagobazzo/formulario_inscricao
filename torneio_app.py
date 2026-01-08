@@ -1,459 +1,241 @@
-from flask import Flask, render_template, request, jsonify, send_file
-from flask_cors import CORS
-import sqlite3
-import os
-import re
-from io import BytesIO
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4
-
-app = Flask(__name__)
-CORS(app)
-
-# ===============================
-# CONFIGURAÇÃO DO BANCO
-# ===============================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "torneio_basquete.db")
-
-
-def get_conn():
-    # timeout ajuda a evitar "database is locked" em hospedagens simples
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def init_db():
-    """
-    Cria tabela e faz migração simples:
-    - adiciona coluna telefone se o DB antigo não tiver
-    """
-    conn = get_conn()
-    cur = conn.cursor()
-
-    # tabela (versão nova já inclui telefone)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS inscricoes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nome_completo TEXT NOT NULL,
-            idade INTEGER NOT NULL,
-            rg TEXT NOT NULL UNIQUE,
-            telefone TEXT NOT NULL,
-            eh_menor BOOLEAN NOT NULL,
-            nome_responsavel TEXT,
-            rg_responsavel TEXT,
-            data_inscricao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            status TEXT DEFAULT 'pendente'
-        )
-    """)
-    conn.commit()
-
-    # migração: adiciona telefone se faltar
-    cur.execute("PRAGMA table_info(inscricoes)")
-    cols = [row["name"] for row in cur.fetchall()]
-    if "telefone" not in cols:
-        cur.execute("ALTER TABLE inscricoes ADD COLUMN telefone TEXT")
-        conn.commit()
-        cur.execute("UPDATE inscricoes SET telefone = '' WHERE telefone IS NULL")
-        conn.commit()
-
-    conn.close()
-
-
-# roda ao iniciar
-init_db()
-
-# ===============================
-# HELPERS / VALIDADORES
-# ===============================
-
-def limpar_rg(rg) -> str:
-    return re.sub(r"\D", "", str(rg or ""))
-
-
-def validar_rg(rg) -> bool:
-    d = limpar_rg(rg)
-    return 7 <= len(d) <= 12
-
-
-def formatar_rg(rg) -> str:
-    d = limpar_rg(rg)
-    # máscara pedida: NN.NNN.NNN-N (9 dígitos)
-    if len(d) == 9:
-        return f"{d[0:2]}.{d[2:5]}.{d[5:8]}-{d[8]}"
-    return str(rg or "")
-
-
-def limpar_telefone(tel) -> str:
-    return re.sub(r"\D", "", str(tel or ""))
-
-
-def validar_telefone(tel) -> bool:
-    d = limpar_telefone(tel)
-    # aceita fixo (10) e celular (11)
-    return len(d) in (10, 11)
-
-
-def formatar_telefone(tel) -> str:
-    d = limpar_telefone(tel)
-    if len(d) == 10:
-        return f"({d[0:2]}) {d[2:6]}-{d[6:10]}"
-    if len(d) == 11:
-        return f"({d[0:2]}) {d[2:7]}-{d[7:11]}"
-    return str(tel or "")
-
-
-def validar_idade(idade) -> bool:
-    try:
-        i = int(idade)
-        return 5 <= i <= 100
-    except Exception:
-        return False
-
-
-# ===============================
-# PDF
-# ===============================
-
-def gerar_pdf_comprovante(row: sqlite3.Row) -> BytesIO:
-    buffer = BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
-    w, h = A4
-
-    c.setFont("Helvetica-Bold", 18)
-    c.drawString(50, h - 70, "Comprovante de Inscrição - Torneio de Basquete")
-
-    c.setFont("Helvetica", 12)
-    c.drawString(50, h - 95, "Ferroviário FC")
-    c.line(50, h - 110, w - 50, h - 110)
-
-    y = h - 150
-    c.setFont("Helvetica", 12)
-
-    c.drawString(50, y, f"Nº Inscrição: {row['id']}")
-    y -= 22
-    c.drawString(50, y, f"Nome: {row['nome_completo']}")
-    y -= 22
-    c.drawString(50, y, f"Idade: {row['idade']}")
-    y -= 22
-    c.drawString(50, y, f"RG: {formatar_rg(row['rg'])}")
-    y -= 22
-    c.drawString(50, y, f"Telefone: {formatar_telefone(row['telefone'])}")
-    y -= 22
-    c.drawString(50, y, f"Data/Hora: {row['data_inscricao']}")
-    y -= 22
-    c.drawString(50, y, f"Status: {row['status']}")
-
-    if int(row["eh_menor"]) == 1:
-        y -= 30
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(50, y, "Responsável (menor de idade)")
-        y -= 22
-        c.setFont("Helvetica", 12)
-        c.drawString(50, y, f"Nome: {row['nome_responsavel'] or ''}")
-        y -= 22
-        c.drawString(50, y, f"RG: {formatar_rg(row['rg_responsavel'] or '')}")
-
-    c.setFont("Helvetica-Oblique", 10)
-    c.drawString(50, 50, "Guarde este comprovante. Apresente no credenciamento se necessário.")
-    c.showPage()
-    c.save()
-
-    buffer.seek(0)
-    return buffer
-
-
-# ===============================
-# ROTAS (PÁGINAS)
-# ===============================
-
-@app.route("/")
-def index():
-    return render_template("index.html")
-
-
-@app.route("/admin")
-def admin():
-    return render_template("admin.html")
-
-
-# ===============================
-# API
-# ===============================
-
-@app.route("/api/inscrever", methods=["POST"])
-def inscrever():
-    try:
-        init_db()
-
-        dados = request.get_json(force=True, silent=True) or {}
-
-        # ✅ normalize: (valor or "") evita None.strip() e garante string
-        nome = (dados.get("nome_completo") or "").strip()
-        idade_raw = dados.get("idade")
-        rg = limpar_rg(dados.get("rg") or "")
-        telefone = limpar_telefone(dados.get("telefone") or "")
-
-        nome_resp = (dados.get("nome_responsavel") or "").strip()
-        rg_resp = limpar_rg(dados.get("rg_responsavel") or "")
-
-        if not nome:
-            return jsonify({"sucesso": False, "erro": "Nome completo é obrigatório"}), 400
-
-        if idade_raw is None or str(idade_raw).strip() == "":
-            return jsonify({"sucesso": False, "erro": "Idade é obrigatória"}), 400
-
-        if not validar_idade(idade_raw):
-            return jsonify({"sucesso": False, "erro": "Idade inválida"}), 400
-
-        if not validar_rg(rg):
-            return jsonify({"sucesso": False, "erro": "RG inválido"}), 400
-
-        if not validar_telefone(telefone):
-            return jsonify({"sucesso": False, "erro": "Telefone inválido. Use (NN) NNNN-NNNN ou (NN) NNNNN-NNNN"}), 400
-
-        idade = int(idade_raw)
-        eh_menor = 1 if idade < 18 else 0
-
-        # menor: exige responsável
-        if eh_menor:
-            if not nome_resp:
-                return jsonify({"sucesso": False, "erro": "Nome do responsável é obrigatório"}), 400
-            if not validar_rg(rg_resp):
-                return jsonify({"sucesso": False, "erro": "RG do responsável inválido"}), 400
-        else:
-            nome_resp = None
-            rg_resp = None
-
-        conn = get_conn()
-        cur = conn.cursor()
-
-        try:
-            cur.execute("""
-                INSERT INTO inscricoes
-                    (nome_completo, idade, rg, telefone, eh_menor, nome_responsavel, rg_responsavel)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (nome, idade, rg, telefone, eh_menor, nome_resp, rg_resp))
-            conn.commit()
-            new_id = cur.lastrowid
-
-        except sqlite3.IntegrityError:
-            return jsonify({"sucesso": False, "erro": "RG já cadastrado. Verifique se você já se inscreveu."}), 409
-
-        finally:
-            conn.close()
-
-        return jsonify({
-            "sucesso": True,
-            "mensagem": "Inscrição realizada com sucesso!",
-            "comprovante_url": f"/api/comprovante/{new_id}"
-        }), 200
-
-    except Exception as e:
-        print("ERRO /api/inscrever:", repr(e), flush=True)
-        return jsonify({"sucesso": False, "erro": str(e)}), 500
-
-
-@app.route("/api/comprovante/<int:inscricao_id>", methods=["GET"])
-def comprovante(inscricao_id: int):
-    try:
-        init_db()
-
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM inscricoes WHERE id = ?", (inscricao_id,))
-        row = cur.fetchone()
-        conn.close()
-
-        if not row:
-            return jsonify({"sucesso": False, "erro": "Inscrição não encontrada"}), 404
-
-        pdf_buffer = gerar_pdf_comprovante(row)
-        filename = f"comprovante_inscricao_{inscricao_id}.pdf"
-
-        return send_file(
-            pdf_buffer,
-            as_attachment=True,
-            download_name=filename,
-            mimetype="application/pdf"
-        )
-
-    except Exception as e:
-        print("ERRO /api/comprovante:", repr(e), flush=True)
-        return jsonify({"sucesso": False, "erro": str(e)}), 500
-
-
-@app.route("/api/inscritos", methods=["GET"])
-def inscritos():
-    try:
-        init_db()
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT id, nome_completo, idade, rg, telefone, eh_menor,
-                   nome_responsavel, rg_responsavel, data_inscricao, status
-            FROM inscricoes
-            ORDER BY datetime(data_inscricao) DESC, id DESC
-        """)
-        rows = cur.fetchall()
-        conn.close()
-
-        out = []
-        for r in rows:
-            out.append({
-                "id": r["id"],
-                "nome_completo": r["nome_completo"],
-                "idade": r["idade"],
-                "rg": r["rg"],
-                "telefone": r["telefone"],
-                "eh_menor": int(r["eh_menor"]),
-                "nome_responsavel": r["nome_responsavel"],
-                "rg_responsavel": r["rg_responsavel"],
-                "data_inscricao": r["data_inscricao"],
-                "status": r["status"],
-            })
-
-        return jsonify(out), 200
-
-    except Exception as e:
-        print("ERRO /api/inscritos:", repr(e), flush=True)
-        return jsonify({"sucesso": False, "erro": str(e)}), 500
-
-
-@app.route("/api/estatisticas", methods=["GET"])
-def estatisticas():
-    try:
-        init_db()
-        conn = get_conn()
-        cur = conn.cursor()
-
-        cur.execute("SELECT COUNT(*) AS total FROM inscricoes")
-        total = int(cur.fetchone()["total"])
-
-        cur.execute("SELECT COUNT(*) AS menores FROM inscricoes WHERE eh_menor = 1")
-        menores = int(cur.fetchone()["menores"])
-
-        conn.close()
-
-        return jsonify({
-            "total_inscritos": total,
-            "menores_de_18": menores,
-            "maiores_de_18": total - menores
-        }), 200
-
-    except Exception as e:
-        print("ERRO /api/estatisticas:", repr(e), flush=True)
-        return jsonify({"sucesso": False, "erro": str(e)}), 500
-
-
-import pandas as pd
-from io import BytesIO
-
-@app.route("/api/exportar-excel", methods=["GET"])
-def exportar_excel():
-    try:
-        init_db()
-        conn = get_conn()
-
-        df = pd.read_sql_query("""
-            SELECT
-                id AS "ID",
-                nome_completo AS "Nome Completo",
-                idade AS "Idade",
-                rg AS "RG",
-                telefone AS "Telefone",
-                CASE WHEN eh_menor = 1 THEN 'Sim' ELSE 'Não' END AS "Menor de Idade",
-                nome_responsavel AS "Nome do Responsável",
-                rg_responsavel AS "RG do Responsável",
-                data_inscricao AS "Data de Inscrição",
-                status AS "Status"
-            FROM inscricoes
-            ORDER BY datetime(data_inscricao) DESC, id DESC
-        """, conn)
-
-        conn.close()
-
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="Inscritos")
-            ws = writer.sheets["Inscritos"]
-            for col in ws.columns:
-                max_len = 0
-                for cell in col:
-                    v = "" if cell.value is None else str(cell.value)
-                    max_len = max(max_len, len(v))
-                ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 60)
-
-        output.seek(0)
-
-        return send_file(
-            output,
-            as_attachment=True,
-            download_name="inscritos_torneio_basquete.xlsx",
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-    except Exception as e:
-        print("ERRO /api/exportar-excel:", repr(e), flush=True)
-        return jsonify({"sucesso": False, "erro": str(e)}), 500
-
-
-
-# ===============================
-# LOCAL
-# ===============================
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
-
-import pandas as pd
-from io import BytesIO
-
-@app.route("/api/exportar-excel", methods=["GET"])
-def exportar_excel():
-    try:
-        init_db()
-        conn = get_conn()
-
-        df = pd.read_sql_query("""
-            SELECT
-                id AS "ID",
-                nome_completo AS "Nome Completo",
-                idade AS "Idade",
-                rg AS "RG",
-                telefone AS "Telefone",
-                CASE WHEN eh_menor = 1 THEN 'Sim' ELSE 'Não' END AS "Menor de Idade",
-                nome_responsavel AS "Nome do Responsável",
-                rg_responsavel AS "RG do Responsável",
-                data_inscricao AS "Data de Inscrição",
-                status AS "Status"
-            FROM inscricoes
-            ORDER BY datetime(data_inscricao) DESC, id DESC
-        """, conn)
-
-        conn.close()
-
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="Inscritos")
-
-            ws = writer.sheets["Inscritos"]
-            for col in ws.columns:
-                max_length = max(len(str(cell.value)) if cell.value else 0 for cell in col)
-                ws.column_dimensions[col[0].column_letter].width = max_length + 2
-
-        output.seek(0)
-
-        return send_file(
-            output,
-            as_attachment=True,
-            download_name="inscritos_torneio_basquete.xlsx",
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-    except Exception as e:
-        print("ERRO /api/exportar-excel:", repr(e), flush=True)
-        return jsonify({"sucesso": False, "erro": str(e)}), 500
-
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Torneio de Basquete - Inscrição</title>
+
+  <style>
+    body { font-family: Arial, sans-serif; background:#f6f7fb; margin:0; padding:0; }
+    .wrap { max-width:720px; margin:40px auto; padding:16px; }
+    .card { background:#fff; border-radius:14px; padding:22px; box-shadow:0 6px 20px rgba(0,0,0,.08); }
+    h1 { margin:0 0 6px; }
+    .sub { color:#666; margin:0 0 18px; }
+    label { display:block; font-weight:700; margin:14px 0 6px; }
+    input { width:100%; padding:12px; border-radius:10px; border:1px solid #d7dbe7; font-size:16px; }
+    input:focus { outline:2px solid #6c7cff30; border-color:#6c7cff; }
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap:14px; }
+    .grid-3 { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:14px; }
+    @media (max-width:640px){ .grid,.grid-3 { grid-template-columns: 1fr; } }
+    .btns { display:flex; gap:10px; margin-top:18px; }
+    button { cursor:pointer; border:0; border-radius:12px; padding:12px 16px; font-weight:800; font-size:16px; }
+    .btn-primary { background:#5b6cff; color:#fff; flex:1; }
+    .btn-secondary { background:#efefef; color:#333; }
+    .msg { margin:14px 0 0; padding:12px; border-radius:12px; display:none; }
+    .msg.ok { display:block; background:#e7fbef; border:1px solid #b7efc7; color:#0a6b2a; }
+    .msg.err { display:block; background:#ffe9e9; border:1px solid #ffc3c3; color:#8d0f0f; }
+    .hint { color:#777; font-size:12px; margin-top:4px; }
+    .row { margin-top:6px; }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Torneio de Basquete</h1>
+      <p class="sub">Ferroviário Futebol Clube — Formulário de Inscrição</p>
+
+      <div id="msg" class="msg"></div>
+
+      <form id="form">
+        <label for="nome_completo">Nome Completo *</label>
+        <input id="nome_completo" name="nome_completo" type="text" placeholder="Ex: João da Silva" required />
+
+        <div class="grid-3">
+          <div>
+            <label for="idade">Idade *</label>
+            <input id="idade" name="idade" type="number" min="5" max="100" placeholder="Ex: 18" required />
+          </div>
+
+          <div>
+            <label for="telefone">Telefone *</label>
+            <input id="telefone" name="telefone" type="text" placeholder="(11) 99999-9999" required />
+            <div class="hint">Aceita fixo (10 dígitos) e celular (11 dígitos).</div>
+          </div>
+
+          <div>
+            <label for="rg">RG *</label>
+            <input id="rg" name="rg" type="text" placeholder="12.345.678-9" required />
+          </div>
+        </div>
+
+        <div id="resp_box" style="display:none;">
+          <h3 style="margin:18px 0 6px;">Dados do Responsável (menor de idade)</h3>
+
+          <div class="grid">
+            <div>
+              <label for="nome_responsavel">Nome do Responsável *</label>
+              <input id="nome_responsavel" name="nome_responsavel" type="text" placeholder="Ex: Maria da Silva" />
+            </div>
+
+            <div>
+              <label for="rg_responsavel">RG do Responsável *</label>
+              <input id="rg_responsavel" name="rg_responsavel" type="text" placeholder="12.345.678-9" />
+            </div>
+          </div>
+        </div>
+
+        <div class="btns">
+          <button class="btn-secondary" type="button" id="btn_limpar">Limpar</button>
+          <button class="btn-primary" type="submit">Realizar Inscrição</button>
+        </div>
+
+        <div class="row" style="margin-top:14px;">
+          <a href="/api/exportar-excel" target="_blank">📥 Exportar inscritos (Excel)</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // -------------------------------
+    // Utils de máscara (input)
+    // -------------------------------
+    function onlyDigits(v) { return (v || "").replace(/\D/g, ""); }
+
+    function maskRG(value) {
+      const d = onlyDigits(value).slice(0, 9);
+      // NN.NNN.NNN-N
+      let out = "";
+      if (d.length > 0) out += d.slice(0, 2);
+      if (d.length >= 3) out += "." + d.slice(2, 5);
+      if (d.length >= 6) out += "." + d.slice(5, 8);
+      if (d.length >= 9) out += "-" + d.slice(8, 9);
+      return out;
+    }
+
+    function maskPhone(value) {
+      const d = onlyDigits(value).slice(0, 11);
+      if (d.length <= 2) return "(" + d;
+      const ddd = d.slice(0, 2);
+      const rest = d.slice(2);
+
+      // celular 11 -> 5 + 4 | fixo 10 -> 4 + 4
+      if (d.length <= 10) {
+        const p1 = rest.slice(0, 4);
+        const p2 = rest.slice(4, 8);
+        return `(${ddd}) ${p1}${p2 ? "-" + p2 : ""}`;
+      } else {
+        const p1 = rest.slice(0, 5);
+        const p2 = rest.slice(5, 9);
+        return `(${ddd}) ${p1}${p2 ? "-" + p2 : ""}`;
+      }
+    }
+
+    // -------------------------------
+    // DOM
+    // -------------------------------
+    const form = document.getElementById("form");
+    const msg = document.getElementById("msg");
+
+    const nome = document.getElementById("nome_completo");
+    const idade = document.getElementById("idade");
+    const telefone = document.getElementById("telefone");
+    const rg = document.getElementById("rg");
+
+    const respBox = document.getElementById("resp_box");
+    const nomeResp = document.getElementById("nome_responsavel");
+    const rgResp = document.getElementById("rg_responsavel");
+
+    const btnLimpar = document.getElementById("btn_limpar");
+
+    function showMsg(type, text) {
+      msg.className = "msg " + type;
+      msg.textContent = text;
+      msg.style.display = "block";
+    }
+    function hideMsg() {
+      msg.style.display = "none";
+      msg.textContent = "";
+      msg.className = "msg";
+    }
+
+    // Menor de idade
+    idade.addEventListener("input", () => {
+      const v = parseInt(idade.value || "0", 10);
+      if (!isNaN(v) && v > 0 && v < 18) {
+        respBox.style.display = "block";
+        nomeResp.required = true;
+        rgResp.required = true;
+      } else {
+        respBox.style.display = "none";
+        nomeResp.required = false;
+        rgResp.required = false;
+        nomeResp.value = "";
+        rgResp.value = "";
+      }
+    });
+
+    // Máscaras
+    rg.addEventListener("input", () => { rg.value = maskRG(rg.value); });
+    rgResp.addEventListener("input", () => { rgResp.value = maskRG(rgResp.value); });
+    telefone.addEventListener("input", () => { telefone.value = maskPhone(telefone.value); });
+
+    // Limpar
+    btnLimpar.addEventListener("click", () => {
+      form.reset();
+      respBox.style.display = "none";
+      nomeResp.required = false;
+      rgResp.required = false;
+      hideMsg();
+    });
+
+    // Submit -> baixa PDF (resposta é PDF)
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      hideMsg();
+
+      const payload = {
+        nome_completo: nome.value,
+        idade: idade.value,
+        telefone: telefone.value,
+        rg: rg.value,
+        nome_responsavel: nomeResp.value || null,
+        rg_responsavel: rgResp.value || null
+      };
+
+      try {
+        const res = await fetch("/api/inscrever", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => null);
+          const erro = data?.erro || "Erro ao processar inscrição.";
+          showMsg("err", erro);
+          return;
+        }
+
+        // resposta é PDF -> baixar
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+
+        const a = document.createElement("a");
+        a.href = url;
+
+        // tenta pegar nome do arquivo do header
+        const cd = res.headers.get("Content-Disposition") || "";
+        const match = cd.match(/filename="?([^"]+)"?/i);
+        a.download = match ? match[1] : "comprovante_inscricao.pdf";
+
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+
+        showMsg("ok", "Inscrição realizada com sucesso! O comprovante (PDF) foi baixado.");
+
+        // opcional: limpar após sucesso
+        // form.reset();
+
+      } catch (err) {
+        console.error(err);
+        showMsg("err", "Falha de conexão com o servidor.");
+      }
+    });
+  </script>
+</body>
+</html>
 
