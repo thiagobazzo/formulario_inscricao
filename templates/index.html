@@ -1,441 +1,64 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Torneio de Basquete - Ferroviário FC</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-        }
-
-        .container {
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            max-width: 600px;
-            width: 100%;
-            padding: 40px;
-            animation: slideIn 0.5s ease-out;
-        }
-
-        @keyframes slideIn {
-            from {
-                opacity: 0;
-                transform: translateY(20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .header {
-            text-align: center;
-            margin-bottom: 30px;
-        }
-
-        .header h1 {
-            color: #667eea;
-            font-size: 28px;
-            margin-bottom: 8px;
-        }
-
-        .header p {
-            color: #666;
-            font-size: 14px;
-        }
-
-        .logo {
-            width: 60px;
-            height: 60px;
-            background: #667eea;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 32px;
-            margin: 0 auto 15px;
-        }
-
-        .form-group {
-            margin-bottom: 20px;
-        }
-
-        label {
-            display: block;
-            margin-bottom: 8px;
-            color: #333;
-            font-weight: 500;
-            font-size: 14px;
-        }
-
-        input[type="text"],
-        input[type="number"] {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e0e0e0;
-            border-radius: 6px;
-            font-size: 14px;
-            transition: border-color 0.3s;
-            font-family: inherit;
-        }
-
-        input[type="text"]:focus,
-        input[type="number"]:focus {
-            outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-        }
-
-        .input-group {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-        }
-
-        .input-group-full {
-            display: grid;
-            grid-template-columns: 1fr;
-        }
-
-        .secao-responsavel {
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 8px;
-            margin: 20px 0;
-            border-left: 4px solid #667eea;
-            display: none;
-        }
-
-        .secao-responsavel.ativa {
-            display: block;
-            animation: fadeIn 0.3s ease-out;
-        }
-
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-            }
-            to {
-                opacity: 1;
-            }
-        }
-
-        .secao-responsavel h3 {
-            color: #667eea;
-            font-size: 16px;
-            margin-bottom: 15px;
-        }
-
-        .button-group {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-top: 30px;
-        }
-
-        button {
-            padding: 12px 24px;
-            border: none;
-            border-radius: 6px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-            font-family: inherit;
-        }
-
-        .btn-submit {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            grid-column: 1 / -1;
-        }
-
-        .btn-submit:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
-        }
-
-        .btn-submit:active {
-            transform: translateY(0);
-        }
-
-        .btn-reset {
-            background: #e0e0e0;
-            color: #333;
-        }
-
-        .btn-reset:hover {
-            background: #d0d0d0;
-        }
-
-        .mensagem {
-            padding: 15px;
-            border-radius: 6px;
-            margin-bottom: 20px;
-            display: none;
-            animation: slideIn 0.3s ease-out;
-        }
-
-        .mensagem.sucesso {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-            display: block;
-        }
-
-        .mensagem.erro {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-            display: block;
-        }
-
-        .loading {
-            display: none;
-            text-align: center;
-            padding: 20px;
-        }
-
-        .spinner {
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #667eea;
-            border-radius: 50%;
-            width: 30px;
-            height: 30px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        .required {
-            color: #e74c3c;
-        }
-
-        @media (max-width: 600px) {
-            .container {
-                padding: 20px;
-            }
-
-            .header h1 {
-                font-size: 24px;
-            }
-
-            .input-group {
-                grid-template-columns: 1fr;
-            }
-
-            .button-group {
-                grid-template-columns: 1fr;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <div class="logo">🏀</div>
-            <h1>Torneio de Basquete</h1>
-            <p>Ferroviário Futebol Clube</p>
-        </div>
-
-        <div id="mensagem" class="mensagem"></div>
-
-        <form id="formulario">
-            <!-- Dados do Participante -->
-            <div class="form-group">
-                <label for="nome">Nome Completo <span class="required">*</span></label>
-                <input type="text" id="nome" name="nome" placeholder="Digite seu nome completo" required>
-            </div>
-
-            <div class="input-group">
-                <div class="form-group">
-                    <label for="idade">Idade <span class="required">*</span></label>
-                    <input type="number" id="idade" name="idade" placeholder="Ex: 25" min="5" max="100" required>
-                </div>
-
-                <div class="form-group">
-                    <label for="rg">RG <span class="required">*</span></label>
-                    <input type="text" id="rg" name="rg" placeholder="Ex: 123456789" required>
-                </div>
-            </div>
-
-            <!-- Seção de Responsável (mostrada apenas para menores) -->
-            <div id="secaoResponsavel" class="secao-responsavel">
-                <h3>⚠️ Dados do Responsável Legal</h3>
-                
-                <div class="form-group">
-                    <label for="nomeResponsavel">Nome do Responsável <span class="required">*</span></label>
-                    <input type="text" id="nomeResponsavel" name="nomeResponsavel" placeholder="Digite o nome do responsável">
-                </div>
-
-                <div class="form-group">
-                    <label for="rgResponsavel">RG do Responsável <span class="required">*</span></label>
-                    <input type="text" id="rgResponsavel" name="rgResponsavel" placeholder="Ex: 987654321">
-                </div>
-            </div>
-
-            <!-- Botões -->
-            <div class="button-group">
-                <button type="reset" class="btn-reset">Limpar Formulário</button>
-                <button type="submit" class="btn-submit">Realizar Inscrição</button>
-            </div>
-        </form>
-
-        <div id="loading" class="loading">
-            <div class="spinner"></div>
-            <p>Processando sua inscrição...</p>
-        </div>
-    </div>
-
-    <script>
-        const formulario = document.getElementById('formulario');
-        const idadeInput = document.getElementById('idade');
-        const secaoResponsavel = document.getElementById('secaoResponsavel');
-        const nomeResponsavelInput = document.getElementById('nomeResponsavel');
-        const rgResponsavelInput = document.getElementById('rgResponsavel');
-        const mensagemDiv = document.getElementById('mensagem');
-        const loadingDiv = document.getElementById('loading');
-
-        // Mostrar/ocultar seção de responsável baseado na idade
-        idadeInput.addEventListener('change', function() {
-            const idade = parseInt(this.value);
-            if (idade < 18) {
-                secaoResponsavel.classList.add('ativa');
-                nomeResponsavelInput.required = true;
-                rgResponsavelInput.required = true;
-            } else {
-                secaoResponsavel.classList.remove('ativa');
-                nomeResponsavelInput.required = false;
-                rgResponsavelInput.required = false;
-                nomeResponsavelInput.value = '';
-                rgResponsavelInput.value = '';
-            }
-        });
-
-        // Validar RG em tempo real
-        function validarRG(rg) {
-            const rgLimpo = rg.replace(/\D/g, '');
-            return rgLimpo.length >= 7;
-        }
-
-        // Formatar RG conforme o usuário digita
-        function formatarRG(valor) {
-            return valor.replace(/\D/g, '').slice(0, 12);
-        }
-
-        document.getElementById('rg').addEventListener('input', function() {
-            this.value = formatarRG(this.value);
-        });
-
-        document.getElementById('rgResponsavel').addEventListener('input', function() {
-            this.value = formatarRG(this.value);
-        });
-
-        // Submeter formulário
-        formulario.addEventListener('submit', async function(e) {
-            e.preventDefault();
-
-            const idade = parseInt(idadeInput.value);
-
-            // Validações básicas
-            if (!document.getElementById('nome').value.trim()) {
-                mostrarMensagem('Nome é obrigatório', 'erro');
-                return;
-            }
-
-            if (!document.getElementById('rg').value.trim()) {
-                mostrarMensagem('RG é obrigatório', 'erro');
-                return;
-            }
-
-            if (!validarRG(document.getElementById('rg').value)) {
-                mostrarMensagem('RG inválido. Deve ter pelo menos 7 dígitos', 'erro');
-                return;
-            }
-
-            if (idade < 18) {
-                if (!document.getElementById('nomeResponsavel').value.trim()) {
-                    mostrarMensagem('Nome do responsável é obrigatório para menores', 'erro');
-                    return;
-                }
-
-                if (!validarRG(document.getElementById('rgResponsavel').value)) {
-                    mostrarMensagem('RG do responsável inválido', 'erro');
-                    return;
-                }
-            }
-
-            // Preparar dados
-            const dados = {
-                nome_completo: document.getElementById('nome').value.trim(),
-                idade: idade,
-                rg: document.getElementById('rg').value.trim(),
-                nome_responsavel: document.getElementById('nomeResponsavel').value.trim() || null,
-                rg_responsavel: document.getElementById('rgResponsavel').value.trim() || null
-            };
-
-            // Enviar para API
-            loadingDiv.style.display = 'block';
-
-            try {
-                const resposta = await fetch('/api/inscrever', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(dados)
-                });
-
-                const resultado = await resposta.json();
-
-                loadingDiv.style.display = 'none';
-
-                if (resposta.ok) {
-                    mostrarMensagem('✓ ' + resultado.mensagem, 'sucesso');
-                    formulario.reset();
-                    secaoResponsavel.classList.remove('ativa');
-                    setTimeout(() => {
-                        document.getElementById('nome').focus();
-                    }, 500);
-                } else {
-                    mostrarMensagem('❌ Erro: ' + resultado.erro, 'erro');
-                }
-            } catch (erro) {
-                loadingDiv.style.display = 'none';
-                mostrarMensagem('❌ Erro ao enviar: ' + erro.message, 'erro');
-            }
-        });
-
-        function mostrarMensagem(texto, tipo) {
-            mensagemDiv.textContent = texto;
-            mensagemDiv.className = 'mensagem ' + tipo;
-            mensagemDiv.style.display = 'block';
-
-            if (tipo === 'sucesso') {
-                setTimeout(() => {
-                    mensagemDiv.style.display = 'none';
-                }, 5000);
-            }
-        }
-    </script>
-</body>
-</html>
+<script>
+function onlyDigits(v){ return (v||"").replace(/\D/g,''); }
+
+function maskTelefone(v){
+  const d = onlyDigits(v).slice(0,11);
+
+  if (d.length <= 2) return d;
+  if (d.length <= 6) return `(${d.slice(0,2)}) ${d.slice(2)}`;
+
+  if (d.length <= 10)
+    return `(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}`;
+
+  return `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7)}`;
+}
+
+function maskRG(v){
+  const d = onlyDigits(v).slice(0,9);
+  if (d.length <= 2) return d;
+  if (d.length <= 5) return `${d.slice(0,2)}.${d.slice(2)}`;
+  if (d.length <= 8) return `${d.slice(0,2)}.${d.slice(2,5)}.${d.slice(5)}`;
+  return `${d.slice(0,2)}.${d.slice(2,5)}.${d.slice(5,8)}-${d.slice(8)}`;
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const tel = document.getElementById("telefone");
+  const rg = document.getElementById("rg");
+  const rgResp = document.getElementById("rg_responsavel");
+  const idade = document.getElementById("idade");
+  const box = document.getElementById("box_responsavel");
+
+  tel.addEventListener("input", e => e.target.value = maskTelefone(e.target.value));
+  rg.addEventListener("input", e => e.target.value = maskRG(e.target.value));
+  if (rgResp) rgResp.addEventListener("input", e => e.target.value = maskRG(e.target.value));
+
+  idade.addEventListener("input", () => {
+    if (parseInt(idade.value||"0",10) < 18) box.classList.remove("hidden");
+    else box.classList.add("hidden");
+  });
+
+  document.getElementById("form").addEventListener("submit", async (e)=>{
+    e.preventDefault();
+
+    const payload = {
+      nome_completo: nome_completo.value,
+      idade: idade.value,
+      telefone: telefone.value,
+      rg: rg.value,
+      nome_responsavel: nome_responsavel?.value,
+      rg_responsavel: rg_responsavel?.value
+    };
+
+    const r = await fetch("/api/inscrever", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify(payload)
+    });
+
+    const data = await r.json();
+    if (!r.ok){ alert(data.erro); return; }
+
+    window.location.href = data.comprovante_url;
+  });
+});
+</script>
