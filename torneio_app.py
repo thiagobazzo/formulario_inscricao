@@ -18,20 +18,21 @@ DB_PATH = os.path.join(BASE_DIR, "torneio_basquete.db")
 
 
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
+    # timeout ajuda a evitar "database is locked" em hospedagens simples
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def init_db():
     """
-    Cria tabela e faz migração simples (adiciona coluna telefone se faltar).
-    Isso evita erro 500 quando você tinha um DB antigo sem a coluna.
+    Cria tabela e faz migração simples:
+    - adiciona coluna telefone se o DB antigo não tiver
     """
     conn = get_conn()
     cur = conn.cursor()
 
-    # 1) garante tabela (estrutura nova já inclui telefone)
+    # tabela (versão nova já inclui telefone)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS inscricoes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,21 +49,19 @@ def init_db():
     """)
     conn.commit()
 
-    # 2) migração: se a tabela já existia sem telefone, adiciona
+    # migração: adiciona telefone se faltar
     cur.execute("PRAGMA table_info(inscricoes)")
     cols = [row["name"] for row in cur.fetchall()]
     if "telefone" not in cols:
         cur.execute("ALTER TABLE inscricoes ADD COLUMN telefone TEXT")
         conn.commit()
-
-        # opcional: preencher null antigos com string vazia (evita quebra em formatação)
         cur.execute("UPDATE inscricoes SET telefone = '' WHERE telefone IS NULL")
         conn.commit()
 
     conn.close()
 
 
-# ✅ roda ao subir (gunicorn importa o módulo)
+# roda ao iniciar
 init_db()
 
 # ===============================
@@ -80,10 +79,10 @@ def validar_rg(rg) -> bool:
 
 def formatar_rg(rg) -> str:
     d = limpar_rg(rg)
-    # Formato pedido: NN.NNN.NNN-N (9 dígitos)
+    # máscara pedida: NN.NNN.NNN-N (9 dígitos)
     if len(d) == 9:
         return f"{d[0:2]}.{d[2:5]}.{d[5:8]}-{d[8]}"
-    return rg
+    return str(rg or "")
 
 
 def limpar_telefone(tel) -> str:
@@ -92,7 +91,7 @@ def limpar_telefone(tel) -> str:
 
 def validar_telefone(tel) -> bool:
     d = limpar_telefone(tel)
-    # ✅ aceita fixo (10) e celular (11)
+    # aceita fixo (10) e celular (11)
     return len(d) in (10, 11)
 
 
@@ -102,7 +101,7 @@ def formatar_telefone(tel) -> str:
         return f"({d[0:2]}) {d[2:6]}-{d[6:10]}"
     if len(d) == 11:
         return f"({d[0:2]}) {d[2:7]}-{d[7:11]}"
-    return tel
+    return str(tel or "")
 
 
 def validar_idade(idade) -> bool:
@@ -127,7 +126,6 @@ def gerar_pdf_comprovante(row: sqlite3.Row) -> BytesIO:
 
     c.setFont("Helvetica", 12)
     c.drawString(50, h - 95, "Ferroviário FC")
-
     c.line(50, h - 110, w - 50, h - 110)
 
     y = h - 150
@@ -141,7 +139,7 @@ def gerar_pdf_comprovante(row: sqlite3.Row) -> BytesIO:
     y -= 22
     c.drawString(50, y, f"RG: {formatar_rg(row['rg'])}")
     y -= 22
-    c.drawString(50, y, f"Telefone: {formatar_telefone(row['telefone'] or '')}")
+    c.drawString(50, y, f"Telefone: {formatar_telefone(row['telefone'])}")
     y -= 22
     c.drawString(50, y, f"Data/Hora: {row['data_inscricao']}")
     y -= 22
@@ -167,7 +165,7 @@ def gerar_pdf_comprovante(row: sqlite3.Row) -> BytesIO:
 
 
 # ===============================
-# PÁGINAS
+# ROTAS (PÁGINAS)
 # ===============================
 
 @app.route("/")
@@ -175,7 +173,6 @@ def index():
     return render_template("index.html")
 
 
-# opcional
 @app.route("/admin")
 def admin():
     return render_template("admin.html")
@@ -188,23 +185,26 @@ def admin():
 @app.route("/api/inscrever", methods=["POST"])
 def inscrever():
     try:
-        init_db()  # ✅ garante migração antes do insert
+        init_db()
 
         dados = request.get_json(force=True, silent=True) or {}
 
+        # ✅ normalize: (valor or "") evita None.strip() e garante string
         nome = (dados.get("nome_completo") or "").strip()
-        idade = dados.get("idade")
-        rg = limpar_rg(dados.get("rg"))
-        telefone = limpar_telefone(dados.get("telefone"))
+        idade_raw = dados.get("idade")
+        rg = limpar_rg(dados.get("rg") or "")
+        telefone = limpar_telefone(dados.get("telefone") or "")
 
         nome_resp = (dados.get("nome_responsavel") or "").strip()
-        rg_resp = limpar_rg(dados.get("rg_responsavel"))
+        rg_resp = limpar_rg(dados.get("rg_responsavel") or "")
 
-        # validações
         if not nome:
             return jsonify({"sucesso": False, "erro": "Nome completo é obrigatório"}), 400
 
-        if not validar_idade(idade):
+        if idade_raw is None or str(idade_raw).strip() == "":
+            return jsonify({"sucesso": False, "erro": "Idade é obrigatória"}), 400
+
+        if not validar_idade(idade_raw):
             return jsonify({"sucesso": False, "erro": "Idade inválida"}), 400
 
         if not validar_rg(rg):
@@ -213,9 +213,10 @@ def inscrever():
         if not validar_telefone(telefone):
             return jsonify({"sucesso": False, "erro": "Telefone inválido. Use (NN) NNNN-NNNN ou (NN) NNNNN-NNNN"}), 400
 
-        idade_int = int(idade)
-        eh_menor = 1 if idade_int < 18 else 0
+        idade = int(idade_raw)
+        eh_menor = 1 if idade < 18 else 0
 
+        # menor: exige responsável
         if eh_menor:
             if not nome_resp:
                 return jsonify({"sucesso": False, "erro": "Nome do responsável é obrigatório"}), 400
@@ -233,11 +234,13 @@ def inscrever():
                 INSERT INTO inscricoes
                     (nome_completo, idade, rg, telefone, eh_menor, nome_responsavel, rg_responsavel)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (nome, idade_int, rg, telefone, eh_menor, nome_resp, rg_resp))
+            """, (nome, idade, rg, telefone, eh_menor, nome_resp, rg_resp))
             conn.commit()
             new_id = cur.lastrowid
+
         except sqlite3.IntegrityError:
             return jsonify({"sucesso": False, "erro": "RG já cadastrado. Verifique se você já se inscreveu."}), 409
+
         finally:
             conn.close()
 
@@ -248,7 +251,6 @@ def inscrever():
         }), 200
 
     except Exception as e:
-        # log no Render
         print("ERRO /api/inscrever:", repr(e), flush=True)
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
@@ -269,6 +271,7 @@ def comprovante(inscricao_id: int):
 
         pdf_buffer = gerar_pdf_comprovante(row)
         filename = f"comprovante_inscricao_{inscricao_id}.pdf"
+
         return send_file(
             pdf_buffer,
             as_attachment=True,
@@ -350,5 +353,4 @@ def estatisticas():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
-
 
