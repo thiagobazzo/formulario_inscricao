@@ -1,5 +1,5 @@
 <script>
-function onlyDigits(v){ return (v||"").replace(/\D/g,''); }
+function onlyDigits(v){ return (v||"").toString().replace(/\D/g,''); }
 
 function maskTelefone(v){
   const d = onlyDigits(v).slice(0,11);
@@ -7,58 +7,104 @@ function maskTelefone(v){
   if (d.length <= 2) return d;
   if (d.length <= 6) return `(${d.slice(0,2)}) ${d.slice(2)}`;
 
-  if (d.length <= 10)
-    return `(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}`;
+  // 10 dígitos: (NN) NNNN-NNNN
+  if (d.length <= 10) return `(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}`;
 
+  // 11 dígitos: (NN) NNNNN-NNNN
   return `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7)}`;
 }
 
 function maskRG(v){
-  const d = onlyDigits(v).slice(0,9);
+  const d = onlyDigits(v).slice(0,9); // NN.NNN.NNN-N
   if (d.length <= 2) return d;
   if (d.length <= 5) return `${d.slice(0,2)}.${d.slice(2)}`;
   if (d.length <= 8) return `${d.slice(0,2)}.${d.slice(2,5)}.${d.slice(5)}`;
   return `${d.slice(0,2)}.${d.slice(2,5)}.${d.slice(5,8)}-${d.slice(8)}`;
 }
 
+function showMsg(id, text){
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.display = "block";
+  el.textContent = text;
+}
+
+function hideMsg(id){
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.display = "none";
+  el.textContent = "";
+}
+
 document.addEventListener("DOMContentLoaded", () => {
-  const tel = document.getElementById("telefone");
-  const rg = document.getElementById("rg");
-  const rgResp = document.getElementById("rg_responsavel");
-  const idade = document.getElementById("idade");
-  const box = document.getElementById("box_responsavel");
+  const form = document.getElementById("form");
+  const inpNome = document.getElementById("nome_completo");
+  const inpIdade = document.getElementById("idade");
+  const inpTel  = document.getElementById("telefone");
+  const inpRG   = document.getElementById("rg");
 
-  tel.addEventListener("input", e => e.target.value = maskTelefone(e.target.value));
-  rg.addEventListener("input", e => e.target.value = maskRG(e.target.value));
-  if (rgResp) rgResp.addEventListener("input", e => e.target.value = maskRG(e.target.value));
+  const boxResp = document.getElementById("box_responsavel");
+  const inpNomeResp = document.getElementById("nome_responsavel");
+  const inpRGResp   = document.getElementById("rg_responsavel");
 
-  idade.addEventListener("input", () => {
-    if (parseInt(idade.value||"0",10) < 18) box.classList.remove("hidden");
-    else box.classList.add("hidden");
+  // Se algum ID não existe, não deixa a página "morrer" silenciosamente
+  if (!form || !inpNome || !inpIdade || !inpTel || !inpRG) {
+    console.error("IDs do formulário não encontrados. Verifique: form, nome_completo, idade, telefone, rg.");
+    return;
+  }
+
+  inpTel.addEventListener("input", e => e.target.value = maskTelefone(e.target.value));
+  inpRG.addEventListener("input",  e => e.target.value = maskRG(e.target.value));
+  if (inpRGResp) inpRGResp.addEventListener("input", e => e.target.value = maskRG(e.target.value));
+
+  inpIdade.addEventListener("input", () => {
+    const v = parseInt(inpIdade.value || "0", 10);
+    if (boxResp) {
+      if (!isNaN(v) && v < 18) boxResp.classList.remove("hidden");
+      else boxResp.classList.add("hidden");
+    }
   });
 
-  document.getElementById("form").addEventListener("submit", async (e)=>{
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
+    hideMsg("msg_ok");
+    hideMsg("msg_err");
+
+    const idadeVal = parseInt(inpIdade.value || "0", 10);
+    const ehMenor = !isNaN(idadeVal) && idadeVal < 18;
 
     const payload = {
-      nome_completo: nome_completo.value,
-      idade: idade.value,
-      telefone: telefone.value,
-      rg: rg.value,
-      nome_responsavel: nome_responsavel?.value,
-      rg_responsavel: rg_responsavel?.value
+      nome_completo: inpNome.value,
+      idade: inpIdade.value,
+      telefone: inpTel.value,
+      rg: inpRG.value,
+      nome_responsavel: ehMenor ? (inpNomeResp ? inpNomeResp.value : "") : null,
+      rg_responsavel: ehMenor ? (inpRGResp ? inpRGResp.value : "") : null
     };
 
-    const r = await fetch("/api/inscrever", {
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body: JSON.stringify(payload)
-    });
+    try {
+      const r = await fetch("/api/inscrever", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(payload)
+      });
 
-    const data = await r.json();
-    if (!r.ok){ alert(data.erro); return; }
+      const data = await r.json().catch(() => ({}));
 
-    window.location.href = data.comprovante_url;
+      if (!r.ok) {
+        showMsg("msg_err", data.erro || "Erro ao enviar inscrição.");
+        return;
+      }
+
+      showMsg("msg_ok", "Inscrição realizada! Baixando comprovante...");
+
+      if (data.comprovante_url) {
+        window.location.href = data.comprovante_url;
+      }
+    } catch (err) {
+      showMsg("msg_err", "Falha de conexão. Tente novamente.");
+      console.error(err);
+    }
   });
 });
 </script>
