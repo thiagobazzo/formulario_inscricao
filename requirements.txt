@@ -1,4 +1,5 @@
 Flask==2.3.3
 Werkzeug==2.3.7
-gunicorn
-Flask-Cors
+gunicorn==23.0.0
+Flask-Cors==4.0.1
+reportlab==4.2.5
