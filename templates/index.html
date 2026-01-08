@@ -1,3 +1,71 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Inscrição - Torneio de Basquete</title>
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;background:#f6f6f6;margin:0;padding:0}
+    .wrap{max-width:720px;margin:30px auto;background:#fff;border-radius:12px;padding:22px;box-shadow:0 8px 24px rgba(0,0,0,.08)}
+    h1{margin:0 0 8px}
+    p{margin:0 0 18px;color:#444}
+    label{display:block;margin:12px 0 6px;font-weight:600}
+    input{width:100%;padding:12px;border:1px solid #ddd;border-radius:10px;font-size:15px}
+    .row{display:flex;gap:12px}
+    .row>div{flex:1}
+    .hidden{display:none}
+    button{margin-top:16px;width:100%;padding:12px;border:0;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;background:#111;color:#fff}
+    .msg{margin-top:14px;padding:12px;border-radius:10px;display:none}
+    .ok{background:#eaffea;border:1px solid #bfe8bf;color:#125c12}
+    .err{background:#ffecec;border:1px solid #f1b6b6;color:#7a1111}
+    .hint{font-size:12px;color:#666;margin-top:6px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>🏀 Inscrição - Torneio de Basquete</h1>
+    <p>Preencha os dados abaixo para se inscrever.</p>
+
+    <!-- ✅ ID do formulário precisa ser "form" -->
+    <form id="form">
+
+      <label for="nome_completo">Nome completo *</label>
+      <input id="nome_completo" name="nome_completo" required placeholder="Ex: João da Silva" />
+
+      <div class="row">
+        <div>
+          <label for="idade">Idade *</label>
+          <input id="idade" name="idade" type="number" min="5" max="100" required placeholder="Ex: 18" />
+        </div>
+        <div>
+          <label for="telefone">Telefone *</label>
+          <input id="telefone" name="telefone" required placeholder="(11) 91234-5678" />
+          <div class="hint">Aceita: (NN) NNNN-NNNN ou (NN) NNNNN-NNNN</div>
+        </div>
+      </div>
+
+      <label for="rg">RG *</label>
+      <input id="rg" name="rg" required placeholder="12.345.678-9" />
+      <div class="hint">Formato: NN.NNN.NNN-N</div>
+
+      <!-- ✅ bloco que aparece para menor -->
+      <div id="box_responsavel" class="hidden">
+        <h3 style="margin:18px 0 6px;">Responsável (menor de idade)</h3>
+
+        <label for="nome_responsavel">Nome do responsável *</label>
+        <input id="nome_responsavel" name="nome_responsavel" placeholder="Ex: Maria da Silva" />
+
+        <label for="rg_responsavel">RG do responsável *</label>
+        <input id="rg_responsavel" name="rg_responsavel" placeholder="12.345.678-9" />
+      </div>
+
+      <button type="submit">Enviar inscrição</button>
+
+      <div id="msg_ok" class="msg ok"></div>
+      <div id="msg_err" class="msg err"></div>
+    </form>
+  </div>
+
 <script>
 function onlyDigits(v){ return (v||"").toString().replace(/\D/g,''); }
 
@@ -28,7 +96,6 @@ function showMsg(id, text){
   el.style.display = "block";
   el.textContent = text;
 }
-
 function hideMsg(id){
   const el = document.getElementById(id);
   if (!el) return;
@@ -47,22 +114,14 @@ document.addEventListener("DOMContentLoaded", () => {
   const inpNomeResp = document.getElementById("nome_responsavel");
   const inpRGResp   = document.getElementById("rg_responsavel");
 
-  // Se algum ID não existe, não deixa a página "morrer" silenciosamente
-  if (!form || !inpNome || !inpIdade || !inpTel || !inpRG) {
-    console.error("IDs do formulário não encontrados. Verifique: form, nome_completo, idade, telefone, rg.");
-    return;
-  }
-
   inpTel.addEventListener("input", e => e.target.value = maskTelefone(e.target.value));
   inpRG.addEventListener("input",  e => e.target.value = maskRG(e.target.value));
-  if (inpRGResp) inpRGResp.addEventListener("input", e => e.target.value = maskRG(e.target.value));
+  inpRGResp.addEventListener("input", e => e.target.value = maskRG(e.target.value));
 
   inpIdade.addEventListener("input", () => {
     const v = parseInt(inpIdade.value || "0", 10);
-    if (boxResp) {
-      if (!isNaN(v) && v < 18) boxResp.classList.remove("hidden");
-      else boxResp.classList.add("hidden");
-    }
+    if (!isNaN(v) && v < 18) boxResp.classList.remove("hidden");
+    else boxResp.classList.add("hidden");
   });
 
   form.addEventListener("submit", async (e) => {
@@ -78,8 +137,8 @@ document.addEventListener("DOMContentLoaded", () => {
       idade: inpIdade.value,
       telefone: inpTel.value,
       rg: inpRG.value,
-      nome_responsavel: ehMenor ? (inpNomeResp ? inpNomeResp.value : "") : null,
-      rg_responsavel: ehMenor ? (inpRGResp ? inpRGResp.value : "") : null
+      nome_responsavel: ehMenor ? inpNomeResp.value : null,
+      rg_responsavel: ehMenor ? inpRGResp.value : null
     };
 
     try {
@@ -89,7 +148,7 @@ document.addEventListener("DOMContentLoaded", () => {
         body: JSON.stringify(payload)
       });
 
-      const data = await r.json().catch(() => ({}));
+      const data = await r.json().catch(()=>({}));
 
       if (!r.ok) {
         showMsg("msg_err", data.erro || "Erro ao enviar inscrição.");
@@ -108,3 +167,6 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 });
 </script>
+</body>
+</html>
+
