@@ -9,9 +9,16 @@ app = Flask(__name__)
 CORS(app)
 
 # Configurar banco de dados
-DB_PATH = 'torneio_basquete.db'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, 'torneio_basquete.db')
 
 def init_db():
+    ...
+    conn.close()
+
+# ✅ Garante que a tabela existe ao iniciar (gunicorn import)
+init_db()
+
     """Inicializa o banco de dados SQLite"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
