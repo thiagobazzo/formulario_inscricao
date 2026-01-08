@@ -2,165 +2,233 @@ from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
 import sqlite3
 import os
-from datetime import datetime
 import re
 
 app = Flask(__name__)
 CORS(app)
 
-# Configurar banco de dados
+# ===============================
+# CONFIGURAÇÃO DO BANCO DE DADOS
+# ===============================
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, 'torneio_basquete.db')
+DB_PATH = os.path.join(BASE_DIR, "torneio_basquete.db")
+
+
+def get_conn():
+    """Abre conexão SQLite (com row_factory para facilitar dict)."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
 
 def init_db():
-    ...
-    conn.close()
-
-# ✅ Garante que a tabela existe ao iniciar (gunicorn import)
-init_db()
-
-    """Inicializa o banco de dados SQLite"""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    
-    # Tabela de inscrições
-    c.execute('''CREATE TABLE IF NOT EXISTS inscricoes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nome_completo TEXT NOT NULL,
-        idade INTEGER NOT NULL,
-        rg TEXT NOT NULL UNIQUE,
-        eh_menor BOOLEAN NOT NULL,
-        nome_responsavel TEXT,
-        rg_responsavel TEXT,
-        data_inscricao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        status TEXT DEFAULT 'pendente'
-    )''')
-    
+    """Cria tabela se não existir."""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS inscricoes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome_completo TEXT NOT NULL,
+            idade INTEGER NOT NULL,
+            rg TEXT NOT NULL UNIQUE,
+            eh_menor BOOLEAN NOT NULL,
+            nome_responsavel TEXT,
+            rg_responsavel TEXT,
+            data_inscricao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            status TEXT DEFAULT 'pendente'
+        )
+    """)
     conn.commit()
     conn.close()
 
-def validar_rg(rg):
-    """Valida formato básico do RG brasileiro"""
-    # Remove caracteres especiais
-    rg_limpo = re.sub(r'\D', '', rg)
-    # Valida se tem entre 7 e 12 dígitos
-    return len(rg_limpo) >= 7
 
-def validar_idade(idade):
-    """Valida se a idade é um número válido"""
+# ✅ IMPORTANTE: roda quando o módulo é importado pelo gunicorn
+init_db()
+
+# ===============================
+# VALIDADORES
+# ===============================
+
+def limpar_rg(rg: str) -> str:
+    if rg is None:
+        return ""
+    return re.sub(r"\D", "", str(rg))
+
+
+def validar_rg(rg: str) -> bool:
+    rg_limpo = limpar_rg(rg)
+    return 7 <= len(rg_limpo) <= 12
+
+
+def validar_idade(idade) -> bool:
     try:
         idade_int = int(idade)
         return 5 <= idade_int <= 100
-    except:
+    except Exception:
         return False
 
-@app.route('/')
+
+# ===============================
+# ROTAS HTML
+# ===============================
+
+@app.route("/")
 def index():
-    """Página principal com o formulário"""
-    return render_template('index.html')
+    return render_template("index.html")
 
-@app.route('/admin')
+
+@app.route("/admin")
 def admin():
-    """Painel administrativo"""
-    return render_template('admin.html')
+    return render_template("admin.html")
 
-@app.route('/api/inscrever', methods=['POST'])
+
+# ===============================
+# API
+# ===============================
+
+@app.route("/api/inscrever", methods=["POST"])
 def inscrever():
-    """Endpoint para processar inscrição"""
+    """
+    Espera JSON:
+    {
+      "nome_completo": "...",
+      "idade": 25,
+      "rg": "1234567",
+      "nome_responsavel": "... (se menor)",
+      "rg_responsavel": "... (se menor)"
+    }
+    """
     try:
-        dados = request.json
-        
-        # Validações
-        if not dados.get('nome_completo'):
-            return jsonify({'sucesso': False, 'erro': 'Nome completo é obrigatório'}), 400
-        
-        if not validar_idade(dados.get('idade')):
-            return jsonify({'sucesso': False, 'erro': 'Idade inválida'}), 400
-        
-        if not validar_rg(dados.get('rg')):
-            return jsonify({'sucesso': False, 'erro': 'RG inválido'}), 400
-        
-        idade = int(dados['idade'])
-        eh_menor = idade < 18
-        
-        # Se é menor, validar dados do responsável
+        dados = request.get_json(force=True, silent=True) or {}
+
+        nome_completo = (dados.get("nome_completo") or "").strip()
+        idade = dados.get("idade")
+        rg = limpar_rg(dados.get("rg"))
+        nome_responsavel = (dados.get("nome_responsavel") or "").strip()
+        rg_responsavel = limpar_rg(dados.get("rg_responsavel"))
+
+        # Validações básicas
+        if not nome_completo:
+            return jsonify({"sucesso": False, "erro": "Nome completo é obrigatório"}), 400
+
+        if not validar_idade(idade):
+            return jsonify({"sucesso": False, "erro": "Idade inválida"}), 400
+
+        if not validar_rg(rg):
+            return jsonify({"sucesso": False, "erro": "RG inválido"}), 400
+
+        idade_int = int(idade)
+        eh_menor = 1 if idade_int < 18 else 0
+
+        # Validação de menor
         if eh_menor:
-            if not dados.get('nome_responsavel'):
-                return jsonify({'sucesso': False, 'erro': 'Nome do responsável é obrigatório'}), 400
-            if not validar_rg(dados.get('rg_responsavel')):
-                return jsonify({'sucesso': False, 'erro': 'RG do responsável inválido'}), 400
-        
-        # Inserir no banco de dados
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        
+            if not nome_responsavel:
+                return jsonify({"sucesso": False, "erro": "Nome do responsável é obrigatório"}), 400
+            if not validar_rg(rg_responsavel):
+                return jsonify({"sucesso": False, "erro": "RG do responsável inválido"}), 400
+        else:
+            # padroniza para não gravar lixo
+            nome_responsavel = None
+            rg_responsavel = None
+
+        # Garantia extra: tabela existe (caso de reboot raro)
+        init_db()
+
+        # Inserção
+        conn = get_conn()
+        cur = conn.cursor()
+
         try:
-            c.execute('''INSERT INTO inscricoes 
-                        (nome_completo, idade, rg, eh_menor, nome_responsavel, rg_responsavel)
-                        VALUES (?, ?, ?, ?, ?, ?)''',
-                     (dados['nome_completo'].strip(),
-                      idade,
-                      dados['rg'].strip(),
-                      eh_menor,
-                      dados.get('nome_responsavel', '').strip() if eh_menor else None,
-                      dados.get('rg_responsavel', '').strip() if eh_menor else None))
-            
+            cur.execute("""
+                INSERT INTO inscricoes
+                    (nome_completo, idade, rg, eh_menor, nome_responsavel, rg_responsavel)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (nome_completo, idade_int, rg, eh_menor, nome_responsavel, rg_responsavel))
             conn.commit()
-            conn.close()
-            
-            return jsonify({
-                'sucesso': True, 
-                'mensagem': 'Inscrição realizada com sucesso!'
-            }), 201
-        
         except sqlite3.IntegrityError:
+            # RG duplicado (UNIQUE)
+            return jsonify({"sucesso": False, "erro": "RG já cadastrado. Verifique se você já se inscreveu."}), 409
+        finally:
             conn.close()
-            return jsonify({'sucesso': False, 'erro': 'Este RG já foi inscrito'}), 400
-    
-    except Exception as e:
-        return jsonify({'sucesso': False, 'erro': str(e)}), 500
 
-@app.route('/api/inscritos', methods=['GET'])
+        return jsonify({"sucesso": True, "mensagem": "Inscrição realizada com sucesso!"}), 200
+
+    except Exception as e:
+        return jsonify({"sucesso": False, "erro": f"Erro interno: {str(e)}"}), 500
+
+
+@app.route("/api/inscritos", methods=["GET"])
 def listar_inscritos():
-    """Endpoint para listar todas as inscrições (para admin)"""
+    """Lista inscritos (mais recentes primeiro)."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
-        
-        c.execute('SELECT * FROM inscricoes ORDER BY data_inscricao DESC')
-        inscritos = [dict(row) for row in c.fetchall()]
+        init_db()
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT
+                id, nome_completo, idade, rg, eh_menor,
+                nome_responsavel, rg_responsavel,
+                data_inscricao, status
+            FROM inscricoes
+            ORDER BY datetime(data_inscricao) DESC, id DESC
+        """)
+        rows = cur.fetchall()
         conn.close()
-        
+
+        inscritos = []
+        for r in rows:
+            inscritos.append({
+                "id": r["id"],
+                "nome_completo": r["nome_completo"],
+                "idade": r["idade"],
+                "rg": r["rg"],
+                "eh_menor": int(r["eh_menor"]),
+                "nome_responsavel": r["nome_responsavel"],
+                "rg_responsavel": r["rg_responsavel"],
+                "data_inscricao": r["data_inscricao"],
+                "status": r["status"],
+            })
+
         return jsonify(inscritos), 200
-    
-    except Exception as e:
-        return jsonify({'erro': str(e)}), 500
 
-@app.route('/api/estatisticas', methods=['GET'])
-def obter_estatisticas():
-    """Endpoint para obter estatísticas das inscrições"""
+    except Exception as e:
+        return jsonify({"sucesso": False, "erro": f"Erro ao listar inscritos: {str(e)}"}), 500
+
+
+@app.route("/api/estatisticas", methods=["GET"])
+def estatisticas():
+    """Retorna total, menores e maiores."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        
-        c.execute('SELECT COUNT(*) FROM inscricoes')
-        total = c.fetchone()[0]
-        
-        c.execute('SELECT COUNT(*) FROM inscricoes WHERE eh_menor = 1')
-        menores = c.fetchone()[0]
-        
-        conn.close()
-        
-        return jsonify({
-            'total_inscritos': total,
-            'menores_de_18': menores,
-            'maiores_de_18': total - menores
-        }), 200
-    
-    except Exception as e:
-        return jsonify({'erro': str(e)}), 500
+        init_db()
+        conn = get_conn()
+        cur = conn.cursor()
 
-if __name__ == '__main__':
-    init_db()
-    app.run(debug=True, host='localhost', port=5000)
+        cur.execute("SELECT COUNT(*) AS total FROM inscricoes")
+        total = cur.fetchone()["total"]
+
+        cur.execute("SELECT COUNT(*) AS menores FROM inscricoes WHERE eh_menor = 1")
+        menores = cur.fetchone()["menores"]
+
+        maiores = total - menores
+
+        conn.close()
+
+        return jsonify({
+            "total_inscritos": int(total),
+            "menores_de_18": int(menores),
+            "maiores_de_18": int(maiores),
+        }), 200
+
+    except Exception as e:
+        return jsonify({"sucesso": False, "erro": f"Erro ao calcular estatísticas: {str(e)}"}), 500
+
+
+# ===============================
+# EXECUÇÃO LOCAL
+# ===============================
+if __name__ == "__main__":
+    # Local: python torneio_app.py
+    # Produção (Render): gunicorn torneio_app:app
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)
