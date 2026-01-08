@@ -347,10 +347,113 @@ def estatisticas():
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
 
+import pandas as pd
+from io import BytesIO
+
+@app.route("/api/exportar-excel", methods=["GET"])
+def exportar_excel():
+    try:
+        init_db()
+        conn = get_conn()
+
+        df = pd.read_sql_query("""
+            SELECT
+                id AS "ID",
+                nome_completo AS "Nome Completo",
+                idade AS "Idade",
+                rg AS "RG",
+                telefone AS "Telefone",
+                CASE WHEN eh_menor = 1 THEN 'Sim' ELSE 'Não' END AS "Menor de Idade",
+                nome_responsavel AS "Nome do Responsável",
+                rg_responsavel AS "RG do Responsável",
+                data_inscricao AS "Data de Inscrição",
+                status AS "Status"
+            FROM inscricoes
+            ORDER BY datetime(data_inscricao) DESC, id DESC
+        """, conn)
+
+        conn.close()
+
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Inscritos")
+            ws = writer.sheets["Inscritos"]
+            for col in ws.columns:
+                max_len = 0
+                for cell in col:
+                    v = "" if cell.value is None else str(cell.value)
+                    max_len = max(max_len, len(v))
+                ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 60)
+
+        output.seek(0)
+
+        return send_file(
+            output,
+            as_attachment=True,
+            download_name="inscritos_torneio_basquete.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    except Exception as e:
+        print("ERRO /api/exportar-excel:", repr(e), flush=True)
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+
+
 # ===============================
 # LOCAL
 # ===============================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
+
+import pandas as pd
+from io import BytesIO
+
+@app.route("/api/exportar-excel", methods=["GET"])
+def exportar_excel():
+    try:
+        init_db()
+        conn = get_conn()
+
+        df = pd.read_sql_query("""
+            SELECT
+                id AS "ID",
+                nome_completo AS "Nome Completo",
+                idade AS "Idade",
+                rg AS "RG",
+                telefone AS "Telefone",
+                CASE WHEN eh_menor = 1 THEN 'Sim' ELSE 'Não' END AS "Menor de Idade",
+                nome_responsavel AS "Nome do Responsável",
+                rg_responsavel AS "RG do Responsável",
+                data_inscricao AS "Data de Inscrição",
+                status AS "Status"
+            FROM inscricoes
+            ORDER BY datetime(data_inscricao) DESC, id DESC
+        """, conn)
+
+        conn.close()
+
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Inscritos")
+
+            ws = writer.sheets["Inscritos"]
+            for col in ws.columns:
+                max_length = max(len(str(cell.value)) if cell.value else 0 for cell in col)
+                ws.column_dimensions[col[0].column_letter].width = max_length + 2
+
+        output.seek(0)
+
+        return send_file(
+            output,
+            as_attachment=True,
+            download_name="inscritos_torneio_basquete.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    except Exception as e:
+        print("ERRO /api/exportar-excel:", repr(e), flush=True)
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
 
